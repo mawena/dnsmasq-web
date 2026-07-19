@@ -271,6 +271,19 @@ EOF
         fi
     fi
 
+    # 10bis) Dérogation systemd : php-fpm est durci (ProtectSystem=full → /etc
+    #        en lecture seule). On autorise l'écriture dans WEBUI_DIR via un drop-in.
+    c_info "Dérogation systemd php-fpm (ReadWritePaths=${WEBUI_DIR})…"
+    local fpm dropped=0
+    for fpm in $(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}'); do
+        local dropd="/etc/systemd/system/${fpm}.d"
+        mkdir -p "$dropd"
+        printf '[Service]\nReadWritePaths=%s\n' "$WEBUI_DIR" > "$dropd/dnsmasq-web.conf"
+        dropped=1
+    done
+    if [ "$dropped" -eq 1 ]; then systemctl daemon-reload; c_ok "Drop-in systemd installé."
+    else c_warn "Aucun service php*-fpm trouvé pour le drop-in."; fi
+
     # 11) Recharger services
     c_info "Rechargement des services…"
     local svc
@@ -309,6 +322,15 @@ cmd_uninstall() {
     if [ -d "$WEBUI_DIR" ]; then rm -rf "$WEBUI_DIR" && c_ok "dossier .conf retiré."; fi
     rm -f "$APP_CONF_FILE"; rmdir "$APP_CONF_DIR" 2>/dev/null || true
     c_ok "config runtime retirée."
+
+    # Retirer les drop-in systemd php-fpm
+    local fpm
+    for fpm in $(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}'); do
+        rm -f "/etc/systemd/system/${fpm}.d/dnsmasq-web.conf"
+        rmdir "/etc/systemd/system/${fpm}.d" 2>/dev/null || true
+    done
+    systemctl daemon-reload
+    c_ok "drop-in systemd retirés."
 
     # Retirer www-data du groupe puis supprimer le groupe (s'il est vide).
     if id -nG "$WEB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$DNSWEB_GROUP"; then
@@ -384,6 +406,20 @@ cmd_status() {
     else
         ko "php-fpm open_basedir" "défini SANS ${DNSMASQ_CONFD} → écriture bloquée"
     fi
+    # Durcissement systemd : ProtectSystem=full/strict rend /etc en lecture seule
+    # pour php-fpm. Il faut une dérogation ReadWritePaths sur WEBUI_DIR.
+    local fpm ps rw
+    for fpm in $(systemctl list-units --type=service --no-legend 'php*-fpm.service' 2>/dev/null | awk '{print $1}'); do
+        ps="$(systemctl show "$fpm" -p ProtectSystem --value 2>/dev/null || true)"
+        rw="$(systemctl show "$fpm" -p ReadWritePaths --value 2>/dev/null || true)"
+        if [ "$ps" = full ] || [ "$ps" = strict ]; then
+            printf '%s' "$rw" | grep -q "$WEBUI_DIR" \
+                && ok "systemd ${fpm}" "ProtectSystem=$ps + dérogation OK" \
+                || ko "systemd ${fpm}" "ProtectSystem=$ps SANS ReadWritePaths=${WEBUI_DIR}"
+        else
+            ok "systemd ${fpm}" "ProtectSystem=${ps:-none}"
+        fi
+    done
     [ -x "$APPLY_CMD" ]  && ok "Wrapper présent" "$APPLY_CMD"   || ko "Wrapper présent" "$APPLY_CMD"
     [ -f "$SUDOERS_FILE" ] && ok "Règle sudo présente"         || ko "Règle sudo présente"
     [ -f "$LOADER" ]     && ok "Loader dnsmasq présent"         || ko "Loader dnsmasq présent"
