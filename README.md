@@ -20,7 +20,7 @@ app/
   bin/create-admin.php    → crée le 1er compte admin (CLI)
 ```
 
-## Déploiement sur le serveur (192.168.0.102)
+## Déploiement sur le serveur
 
 ### 1. Préparer le serveur
 
@@ -51,7 +51,7 @@ sudo -u www-data php bin/create-admin.php admin
 
 ### 4. Accéder à l'interface
 
-Ouvre `http://192.168.0.102/` et connecte-toi.
+Ouvre `http://localhost/` et connecte-toi.
 
 ## Sécurité
 
