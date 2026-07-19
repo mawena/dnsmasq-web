@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= h($title ?? 'dnsmasq-web') ?> — dnsmasq-web</title>
+    <link rel="icon" type="image/svg+xml" href="<?= h(base_path()) ?>/assets/favicon.svg">
     <link rel="stylesheet" href="<?= h(base_path()) ?>/assets/app.css">
 </head>
 <body>
