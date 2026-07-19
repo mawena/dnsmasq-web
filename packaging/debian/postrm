@@ -1,0 +1,28 @@
+#!/bin/sh
+# postrm : au PURGE, effacer les données persistantes (base MySQL, config,
+# fichiers .conf générés). Le CLI n'existe peut-être plus à ce stade, donc on
+# agit en shell direct. On ne touche PAS au groupe partagé « webdev » (lnmp).
+set -e
+
+case "$1" in
+    purge)
+        if command -v mysql >/dev/null 2>&1; then
+            mysql <<'SQL' 2>/dev/null || true
+DROP DATABASE IF EXISTS `dnsmasq_webui`;
+DROP USER IF EXISTS 'dnsmasq_webui'@'localhost';
+DROP USER IF EXISTS 'dnsmasq_webui'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+        fi
+        rm -rf /etc/dnsmasq-webui /etc/dnsmasq.d/webui
+        rm -f /etc/dnsmasq.d/00-dnsmasq-webui-loader.conf
+        rm -f /etc/systemd/resolved.conf.d/dnsmasq-webui.conf
+        rmdir /etc/systemd/resolved.conf.d 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl restart dnsmasq 2>/dev/null || true
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

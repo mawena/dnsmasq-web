@@ -1,0 +1,16 @@
+#!/bin/sh
+# prerm : à la SUPPRESSION (pas à l'upgrade), défaire les changements système
+# tant que le CLI est encore présent (restaure systemd-resolved, retire wrapper,
+# sudoers, loader, vhost, drop-in systemd). La base et la config sont conservées
+# (seul « apt purge » les efface, via postrm).
+set -e
+
+if [ "$1" = "remove" ]; then
+    if [ -x /usr/bin/dnsmasq-webui ]; then
+        /usr/bin/dnsmasq-webui _remove || true
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

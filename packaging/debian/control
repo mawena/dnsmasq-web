@@ -1,0 +1,28 @@
+Source: dnsmasq-webui
+Section: net
+Priority: optional
+Maintainer: Charles Gamligo <gamligocharles@gmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+
+Package: dnsmasq-webui
+Architecture: all
+Depends: ${misc:Depends}, bash, php-cli,
+ dnsmasq,
+ nginx,
+ default-mysql-server | mariadb-server | mysql-server,
+ php-fpm, php-mysql
+Recommends: acl
+Description: Interface web d'administration pour dnsmasq (DNS/DHCP réseau local).
+ Transforme une machine Ubuntu en serveur DNS/DHCP de réseau local administrable
+ depuis un navigateur : enregistrements DNS locaux, alias CNAME, réservations
+ DHCP, baux actifs, filtrage DNS (blocage de domaines) et paramètres du service.
+ .
+ « apt install dnsmasq-webui » installe et configure la pile : dnsmasq devient
+ le résolveur du réseau (avec repli sur les DNS publics), le port 53 est libéré
+ de systemd-resolved, et l'interface web est prête (exposée via nginx, ou via
+ lnmp s'il est présent). MySQL est la source de vérité ; les fichiers de
+ configuration dnsmasq sont régénérés à chaque changement.
+ .
+ L'outil « dnsmasq-webui » reste disponible en ligne de commande pour créer des
+ comptes, diagnostiquer (status), sauvegarder et restaurer.

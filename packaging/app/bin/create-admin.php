@@ -15,7 +15,7 @@ if (PHP_SAPI !== 'cli') {
     exit("À exécuter en ligne de commande uniquement.\n");
 }
 
-$configFile = getenv('DNSMASQ_WEB_CONFIG') ?: '/etc/dnsmasq-web/config.php';
+$configFile = getenv('DNSMASQ_WEB_CONFIG') ?: '/etc/dnsmasq-webui/config.php';
 if (!is_file($configFile)) {
     fwrite(STDERR, "Config introuvable : $configFile\n");
     exit(1);

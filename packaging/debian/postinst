@@ -1,0 +1,15 @@
+#!/bin/sh
+# postinst de dnsmasq-webui : les paquets nécessaires (dnsmasq, nginx, MySQL,
+# php-fpm) sont fournis par les dépendances ; on ne lance PAS apt ici (verrou
+# dpkg). Toute la configuration système est faite par le hook _postinstall.
+set -e
+
+if [ "$1" = "configure" ]; then
+    if [ -x /usr/bin/dnsmasq-webui ]; then
+        /usr/bin/dnsmasq-webui _postinstall || true
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

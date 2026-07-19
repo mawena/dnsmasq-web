@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+#
+# dnsmasq-webui — outil de gestion de l'interface web d'administration de dnsmasq.
+#
+# Installé par le paquet .deb dans /usr/bin. La configuration système est faite
+# automatiquement à l'installation du paquet (hook _postinstall) ; cet outil
+# sert ensuite à l'administration en ligne de commande.
+#
+# Usage : sudo dnsmasq-webui <commande> [options]
+#
+# Commandes :
+#     create-admin <user> [admin|viewer]  Crée / met à jour un compte admin.
+#     apply         Régénère les .conf depuis MySQL et recharge dnsmasq.
+#     status        Diagnostic de santé complet.
+#     backup [dir]  Archive base + .conf + config en .tar.gz.
+#     restore <f>   Restaure une archive puis réapplique.
+#     reconfigure   Rejoue la configuration système (idempotent).
+#     version       Affiche la version.
+#     help          Cette aide.
+#
+set -euo pipefail
+
+VERSION="@VERSION@"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Emplacements (FHS — fixés par le paquet)
+# ─────────────────────────────────────────────────────────────────────────────
+WEB_USER="www-data"
+WEB_GROUP="webdev"                        # groupe partagé (réutilisé de lnmp)
+APP_DIR="/usr/share/dnsmasq-webui"        # code PHP (public/ = docroot)
+WEBUI_DIR="/etc/dnsmasq.d/webui"          # .conf gérés par l'app
+DNSMASQ_CONFD="/etc/dnsmasq.d"
+LEASES_FILE="/var/lib/misc/dnsmasq.leases"
+APPLY_CMD="/usr/sbin/dnsmasq-webui-apply"
+SUDOERS_FILE="/etc/sudoers.d/dnsmasq-webui"
+LOADER="${DNSMASQ_CONFD}/00-dnsmasq-webui-loader.conf"
+APP_CONF_DIR="/etc/dnsmasq-webui"
+APP_CONF_FILE="${APP_CONF_DIR}/config.php"
+BACKUP_DIR_DEFAULT="/var/backups/dnsmasq-webui"
+RESOLVED_DROPIN="/etc/systemd/resolved.conf.d/dnsmasq-webui.conf"
+RESOLVCONF_BAK="/etc/dnsmasq-webui/resolv.conf.orig"
+NGINX_SITE="/etc/nginx/sites-available/dnsmasq-webui"
+NGINX_SERVER_NAME="dnsmasq.mawena.local"
+
+DB_NAME="dnsmasq_webui"
+DB_USER="dnsmasq_webui"
+DB_HOST="127.0.0.1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+c_info()  { printf '\033[1;34m[i]\033[0m %s\n' "$*"; }
+c_ok()    { printf '\033[1;32m[✓]\033[0m %s\n' "$*"; }
+c_warn()  { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
+c_err()   { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; }
+die()     { c_err "$*"; exit 1; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "Commande à lancer en root (sudo dnsmasq-webui $1)."; }
+confirm() { local r; read -rp "$1 [oui/N] " r; [ "$r" = oui ] || [ "$r" = o ]; }
+have()    { command -v "$1" >/dev/null 2>&1; }
+lnmp_installed() { dpkg-query -W -f='${Status}' lnmp 2>/dev/null | grep -q "install ok installed"; }
+
+read_db() { php -r '$c=require $argv[1]; echo $c["db"][$argv[2]] ?? "";' "$APP_CONF_FILE" "$1"; }
+app_mysql() { MYSQL_PWD="$(read_db pass)" mysql -h "$(read_db host)" -u "$(read_db user)" "$@"; }
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Schéma + seed
+# ═════════════════════════════════════════════════════════════════════════════
+db_schema() {
+cat <<'SQL'
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL, role ENUM('admin','viewer') NOT NULL DEFAULT 'admin',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS dns_hosts (
+  id INT AUTO_INCREMENT PRIMARY KEY, hostname VARCHAR(255) NOT NULL, ip VARCHAR(45) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1, comment VARCHAR(255) DEFAULT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_host_ip (hostname, ip)) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS dns_cnames (
+  id INT AUTO_INCREMENT PRIMARY KEY, alias VARCHAR(255) NOT NULL UNIQUE, target VARCHAR(255) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1, comment VARCHAR(255) DEFAULT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS dhcp_reservations (
+  id INT AUTO_INCREMENT PRIMARY KEY, mac VARCHAR(17) NOT NULL UNIQUE, ip VARCHAR(45) NOT NULL,
+  hostname VARCHAR(255) DEFAULT NULL, enabled TINYINT(1) NOT NULL DEFAULT 1, comment VARCHAR(255) DEFAULT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS blocklist (
+  id INT AUTO_INCREMENT PRIMARY KEY, domain VARCHAR(255) NOT NULL UNIQUE,
+  mode ENUM('block','allow') NOT NULL DEFAULT 'block', enabled TINYINT(1) NOT NULL DEFAULT 1,
+  comment VARCHAR(255) DEFAULT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS settings (
+  name VARCHAR(64) PRIMARY KEY, value TEXT,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) DEFAULT NULL, action VARCHAR(64) NOT NULL,
+  detail TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB;
+-- Réglages par défaut : DNS local + repli sur les résolveurs publics.
+INSERT IGNORE INTO settings (name, value) VALUES
+  ('upstream_dns','1.1.1.1,8.8.8.8'),
+  ('domain_needed','1'), ('bogus_priv','1'),
+  ('cache_size','1000'), ('local_domain','lan');
+SQL
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# _postinstall — configuration système (appelé par le postinst du paquet)
+# ═════════════════════════════════════════════════════════════════════════════
+cmd_postinstall() {
+    # 1) Groupe partagé (réutilise webdev s'il existe, sinon le crée)
+    getent group "$WEB_GROUP" >/dev/null 2>&1 || groupadd "$WEB_GROUP"
+    id -nG "$WEB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$WEB_GROUP" \
+        || usermod -aG "$WEB_GROUP" "$WEB_USER"
+    c_ok "Groupe ${WEB_GROUP} prêt (${WEB_USER} membre)."
+
+    # 2) Dossier des .conf (setgid, groupe)
+    mkdir -p "$WEBUI_DIR"
+    chown root:"$WEB_GROUP" "$WEBUI_DIR"; chmod 2775 "$WEBUI_DIR"
+    [ -f "$WEBUI_DIR/00-init.conf" ] || {
+        printf '# Géré par dnsmasq-webui — régénéré depuis MySQL, ne pas éditer.\n' > "$WEBUI_DIR/00-init.conf"
+        chown "$WEB_USER":"$WEB_GROUP" "$WEBUI_DIR/00-init.conf"; chmod 664 "$WEBUI_DIR/00-init.conf"; }
+
+    # 3) Loader dnsmasq (conf-dir n'est pas récursif)
+    printf '# Généré par dnsmasq-webui.\nconf-dir=%s/,*.conf\n' "$WEBUI_DIR" > "$LOADER"
+    chown root:root "$LOADER"; chmod 644 "$LOADER"
+    if [ -f /etc/dnsmasq.conf ]; then
+        grep -Eq '^\s*conf-dir=.*dnsmasq\.d' /etc/dnsmasq.conf \
+            || printf '\n# Ajouté par dnsmasq-webui\nconf-dir=%s/,*.conf\n' "$DNSMASQ_CONFD" >> /etc/dnsmasq.conf
+    else
+        printf '# Créé par dnsmasq-webui\nconf-dir=%s/,*.conf\n' "$DNSMASQ_CONFD" > /etc/dnsmasq.conf
+    fi
+
+    # 4) Wrapper root + règle sudo ciblée
+    cat > "$APPLY_CMD" <<'EOF'
+#!/usr/bin/env bash
+# dnsmasq-webui-apply — valide puis recharge dnsmasq. Via sudo, sans argument.
+set -euo pipefail
+if [ "$#" -ne 0 ]; then echo "Aucun argument accepté." >&2; exit 2; fi
+if ! /usr/sbin/dnsmasq --test 2>&1; then
+  echo "Validation dnsmasq échouée : configuration NON appliquée." >&2; exit 1
+fi
+/bin/systemctl restart dnsmasq
+echo "dnsmasq rechargé avec succès."
+EOF
+    chown root:root "$APPLY_CMD"; chmod 750 "$APPLY_CMD"
+    printf '%s ALL=(root) NOPASSWD: %s\n' "$WEB_USER" "$APPLY_CMD" > "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1 || { rm -f "$SUDOERS_FILE"; die "sudoers invalide."; }
+    c_ok "Wrapper + règle sudo installés."
+
+    # 5) Baux lisibles par le groupe
+    mkdir -p "$(dirname "$LEASES_FILE")"; [ -f "$LEASES_FILE" ] || : > "$LEASES_FILE"
+    chgrp "$WEB_GROUP" "$LEASES_FILE" 2>/dev/null || true
+    chmod 640 "$LEASES_FILE" 2>/dev/null || true
+
+    # 6) Base MySQL (localhost + 127.0.0.1 : socket ET TCP)
+    local db_pass
+    if [ -f "$APP_CONF_FILE" ]; then
+        db_pass="$(read_db pass)"          # conserve le mot de passe existant (réinstall/upgrade)
+    else
+        db_pass="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
+    fi
+    if mysql -e "SELECT 1" >/dev/null 2>&1; then
+        mysql <<SQL
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${db_pass}';
+CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${db_pass}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${db_pass}';
+ALTER USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${db_pass}';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+        db_schema | mysql "$DB_NAME"
+        c_ok "Base '${DB_NAME}' + schéma prêts."
+    else
+        c_warn "MySQL injoignable (root socket) — configure la base puis 'dnsmasq-webui reconfigure'."
+    fi
+
+    # 7) Config runtime de l'app
+    mkdir -p "$APP_CONF_DIR"
+    cat > "$APP_CONF_FILE" <<EOF
+<?php
+// Généré par dnsmasq-webui — configuration runtime.
+return [
+    'db' => ['host' => '${DB_HOST}', 'name' => '${DB_NAME}', 'user' => '${DB_USER}', 'pass' => '${db_pass}'],
+    'webui_dir'   => '${WEBUI_DIR}',
+    'leases_file' => '${LEASES_FILE}',
+    'apply_cmd'   => 'sudo ${APPLY_CMD}',
+];
+EOF
+    chown root:"$WEB_USER" "$APP_CONF_FILE"; chmod 640 "$APP_CONF_FILE"
+
+    # 8) Dérogation systemd : php-fpm est durci (ProtectSystem=full → /etc en RO)
+    local fpm
+    for fpm in $(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}'); do
+        mkdir -p "/etc/systemd/system/${fpm}.d"
+        printf '[Service]\nReadWritePaths=%s\n' "$WEBUI_DIR" > "/etc/systemd/system/${fpm}.d/dnsmasq-webui.conf"
+    done
+    systemctl daemon-reload 2>/dev/null || true
+
+    # 9) Libérer le port 53 (systemd-resolved) pour que dnsmasq écoute dessus
+    free_port_53
+
+    # 10) Vhost nginx : seulement si lnmp n'est pas là (sinon exposition via lnmp)
+    if lnmp_installed; then
+        c_info "lnmp détecté — pas de vhost (expose l'interface via lnmp)."
+    elif have nginx; then
+        setup_nginx
+    else
+        c_warn "nginx absent — installe-le puis 'dnsmasq-webui reconfigure'."
+    fi
+
+    # 11) Recharger php-fpm (groupe) puis générer les .conf + démarrer dnsmasq
+    for fpm in $(systemctl list-units --type=service --no-legend 'php*-fpm.service' 2>/dev/null | awk '{print $1}'); do
+        systemctl restart "$fpm" 2>/dev/null || true
+    done
+    systemctl enable dnsmasq >/dev/null 2>&1 || true
+    if [ -f "$APP_CONF_FILE" ] && app_mysql -e "SELECT 1" >/dev/null 2>&1; then
+        php "$APP_DIR/bin/apply.php" >/dev/null 2>&1 && c_ok "dnsmasq configuré et démarré." \
+            || c_warn "Génération initiale à vérifier ('dnsmasq-webui apply')."
+    else
+        systemctl restart dnsmasq 2>/dev/null || true
+    fi
+
+    echo
+    c_ok "dnsmasq-webui installé."
+    echo "  Prochaine étape : sudo dnsmasq-webui create-admin admin"
+    lnmp_installed && echo "  Exposition web  : via lnmp (root = ${APP_DIR}/public)" \
+                   || echo "  Interface web   : http://${NGINX_SERVER_NAME}/"
+}
+
+# Libère le port 53 occupé par systemd-resolved (avec sauvegarde).
+free_port_53() {
+    systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1 || return 0
+    systemctl is-enabled systemd-resolved >/dev/null 2>&1 || systemctl is-active systemd-resolved >/dev/null 2>&1 || return 0
+    mkdir -p /etc/systemd/resolved.conf.d
+    printf '# Généré par dnsmasq-webui : dnsmasq prend le port 53.\n[Resolve]\nDNSStubListener=no\n' > "$RESOLVED_DROPIN"
+    systemctl restart systemd-resolved 2>/dev/null || true
+    # L'hôte doit résoudre via dnsmasq (sinon /etc/resolv.conf pointe sur un :53 vide).
+    if [ ! -e "$RESOLVCONF_BAK" ]; then
+        mkdir -p "$APP_CONF_DIR"
+        cp -a /etc/resolv.conf "$RESOLVCONF_BAK" 2>/dev/null || true
+    fi
+    rm -f /etc/resolv.conf
+    printf '# Géré par dnsmasq-webui\nnameserver 127.0.0.1\noptions edns0 trust-ad\n' > /etc/resolv.conf
+    c_ok "Port 53 libéré (systemd-resolved stub désactivé, resolv.conf → 127.0.0.1)."
+}
+
+# Restaure systemd-resolved dans son état d'origine.
+restore_port_53() {
+    [ -f "$RESOLVED_DROPIN" ] || return 0
+    rm -f "$RESOLVED_DROPIN"
+    if [ -e "$RESOLVCONF_BAK" ]; then
+        rm -f /etc/resolv.conf; cp -a "$RESOLVCONF_BAK" /etc/resolv.conf 2>/dev/null || true
+        rm -f "$RESOLVCONF_BAK"
+    fi
+    systemctl restart systemd-resolved 2>/dev/null || true
+    c_ok "systemd-resolved restauré."
+}
+
+setup_nginx() {
+    local sock; sock="$(ls -1 /run/php/php*-fpm.sock 2>/dev/null | head -n1 || true)"
+    [ -n "$sock" ] || { c_warn "Socket php-fpm introuvable — vhost non créé."; return 0; }
+    cat > "$NGINX_SITE" <<EOF
+server {
+    listen 80;
+    server_name ${NGINX_SERVER_NAME};
+    root ${APP_DIR}/public;
+    index index.php;
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+    location ~ \.php\$ { include snippets/fastcgi-php.conf; fastcgi_pass unix:${sock}; }
+    location ~ /\.(?!well-known) { deny all; }
+}
+EOF
+    ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/dnsmasq-webui
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null \
+        && c_ok "Vhost nginx activé (${NGINX_SERVER_NAME})." \
+        || c_warn "nginx -t a échoué — vérifie la conf."
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# _remove — défait les changements système (appelé par prerm à la suppression)
+# ═════════════════════════════════════════════════════════════════════════════
+cmd_remove() {
+    restore_port_53
+    rm -f "$SUDOERS_FILE" "$APPLY_CMD" "$LOADER"
+    rm -f /etc/nginx/sites-enabled/dnsmasq-webui "$NGINX_SITE"
+    local fpm
+    for fpm in $(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}'); do
+        rm -f "/etc/systemd/system/${fpm}.d/dnsmasq-webui.conf"
+        rmdir "/etc/systemd/system/${fpm}.d" 2>/dev/null || true
+    done
+    systemctl daemon-reload 2>/dev/null || true
+    have nginx && nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+    systemctl restart dnsmasq 2>/dev/null || true
+    c_ok "Changements système retirés (base et config conservées ; 'apt purge' pour tout effacer)."
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# create-admin / apply
+# ═════════════════════════════════════════════════════════════════════════════
+cmd_create_admin() {
+    [ -f "$APP_CONF_FILE" ] || die "Paquet non configuré (dnsmasq-webui reconfigure)."
+    php "$APP_DIR/bin/create-admin.php" "$@"
+}
+cmd_apply() {
+    [ -f "$APP_CONF_FILE" ] || die "Paquet non configuré."
+    php "$APP_DIR/bin/apply.php" && c_ok "Appliqué." || die "Échec de l'application."
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# status
+# ═════════════════════════════════════════════════════════════════════════════
+ok() { printf '  \033[1;32m✓\033[0m %-40s %s\n' "$1" "${2:-}"; }
+ko() { printf '  \033[1;31m✗\033[0m %-40s %s\n' "$1" "${2:-}"; }
+cmd_status() {
+    echo "── État de dnsmasq-webui (v${VERSION}) ──"
+    local a t n fpm ps rw
+    a="$(systemctl is-active dnsmasq 2>/dev/null || true)"
+    [ "$a" = active ] && ok "Service dnsmasq" "$a" || ko "Service dnsmasq" "$a"
+    a="$(systemctl is-active systemd-resolved 2>/dev/null || echo inactive)"
+    [ -f "$RESOLVED_DROPIN" ] && ok "Port 53 libéré" "stub resolved désactivé" \
+        || ko "Port 53" "stub systemd-resolved actif ($a) → conflit possible"
+    id -nG "$WEB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$WEB_GROUP" \
+        && ok "${WEB_USER} dans ${WEB_GROUP}" || ko "${WEB_USER} dans ${WEB_GROUP}"
+    sudo -u "$WEB_USER" test -w "$WEBUI_DIR" 2>/dev/null \
+        && ok "Dossier .conf inscriptible (${WEB_USER})" "$WEBUI_DIR" \
+        || ko "Dossier .conf inscriptible (${WEB_USER})" "$WEBUI_DIR"
+    for fpm in $(systemctl list-units --type=service --no-legend 'php*-fpm.service' 2>/dev/null | awk '{print $1}'); do
+        ps="$(systemctl show "$fpm" -p ProtectSystem --value 2>/dev/null || true)"
+        rw="$(systemctl show "$fpm" -p ReadWritePaths --value 2>/dev/null || true)"
+        if [ "$ps" = full ] || [ "$ps" = strict ]; then
+            printf '%s' "$rw" | grep -q "$WEBUI_DIR" \
+                && ok "systemd ${fpm}" "ProtectSystem=$ps + dérogation OK" \
+                || ko "systemd ${fpm}" "ProtectSystem=$ps SANS ReadWritePaths=${WEBUI_DIR}"
+        fi
+    done
+    [ -x "$APPLY_CMD" ] && ok "Wrapper présent" "$APPLY_CMD" || ko "Wrapper présent" "$APPLY_CMD"
+    [ -f "$SUDOERS_FILE" ] && ok "Règle sudo présente" || ko "Règle sudo présente"
+    [ -f "$APP_CONF_FILE" ] && ok "Config présente" || ko "Config présente"
+    if [ -f "$APP_CONF_FILE" ] && app_mysql -e "SELECT 1" >/dev/null 2>&1; then
+        ok "Connexion base" "$(read_db name)"
+        for t in dns_hosts dns_cnames dhcp_reservations blocklist users; do
+            n="$(app_mysql -N "$(read_db name)" -e "SELECT COUNT(*) FROM $t" 2>/dev/null || echo '?')"
+            printf '      %-22s %s\n' "$t" "$n"
+        done
+    else
+        ko "Connexion base" "indisponible"
+    fi
+    lnmp_installed && echo "  (lnmp présent : exposition web gérée par lnmp)"
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# backup / restore
+# ═════════════════════════════════════════════════════════════════════════════
+cmd_backup() {
+    [ -f "$APP_CONF_FILE" ] || die "Rien à sauvegarder."
+    local dir="${1:-$BACKUP_DIR_DEFAULT}"; mkdir -p "$dir"
+    local ts file tmp; ts="$(date +%Y%m%d-%H%M%S)"; file="$dir/dnsmasq-webui-$ts.tar.gz"; tmp="$(mktemp -d)"
+    MYSQL_PWD="$(read_db pass)" mysqldump -h "$(read_db host)" -u "$(read_db user)" \
+        --single-transaction --no-tablespaces "$(read_db name)" > "$tmp/db.sql"
+    cp -a "$WEBUI_DIR" "$tmp/webui" 2>/dev/null || mkdir -p "$tmp/webui"
+    cp -a "$APP_CONF_FILE" "$tmp/config.php"
+    tar czf "$file" -C "$tmp" .; rm -rf "$tmp"; chmod 600 "$file"
+    c_ok "Sauvegarde : $file"
+}
+cmd_restore() {
+    local file="${1:-}"; [ -f "$file" ] || die "Usage : dnsmasq-webui restore <archive.tar.gz>"
+    c_warn "La base '${DB_NAME}' et les .conf seront ÉCRASÉS."
+    confirm "Continuer ?" || { c_info "Annulé."; return 0; }
+    local tmp; tmp="$(mktemp -d)"; tar xzf "$file" -C "$tmp"
+    [ -f "$tmp/db.sql" ] || { rm -rf "$tmp"; die "Archive invalide."; }
+    app_mysql "$(read_db name)" < "$tmp/db.sql"
+    if [ -d "$tmp/webui" ]; then
+        mkdir -p "$WEBUI_DIR"; cp -a "$tmp/webui/." "$WEBUI_DIR/"
+        chown -R root:"$WEB_GROUP" "$WEBUI_DIR"; chmod 2775 "$WEBUI_DIR"
+    fi
+    rm -rf "$tmp"; c_ok "Données restaurées."; cmd_apply
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# help + dispatch
+# ═════════════════════════════════════════════════════════════════════════════
+cmd_help() { awk 'NR>=3 { if ($0 !~ /^#/) exit; sub(/^# ?/,""); print }' "$0"; }
+
+case "${1:-help}" in
+    create-admin) shift; need_root create-admin; cmd_create_admin "$@";;
+    apply)        shift; need_root apply;         cmd_apply "$@";;
+    status)       shift; need_root status;        cmd_status "$@";;
+    backup)       shift; need_root backup;        cmd_backup "$@";;
+    restore)      shift; need_root restore;       cmd_restore "$@";;
+    reconfigure)  shift; need_root reconfigure;   cmd_postinstall "$@";;
+    version|--version|-V) echo "dnsmasq-webui ${VERSION}";;
+    _postinstall) shift; need_root _postinstall;  cmd_postinstall "$@";;
+    _remove)      shift; need_root _remove;       cmd_remove "$@";;
+    help|-h|--help) cmd_help;;
+    *) c_err "Commande inconnue : $1"; echo; cmd_help; exit 1;;
+esac

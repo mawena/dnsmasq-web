@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+# Version extraite du changelog, injectée dans le CLI à l'installation.
+VERSION := $(shell dpkg-parsechangelog -SVersion)
+
+%:
+	dh $@
+
+# Après la copie des fichiers, remplacer le placeholder @VERSION@ par la version
+# réelle du paquet (le CLI affiche alors la bonne version).
+override_dh_install:
+	dh_install
+	sed -i 's/@VERSION@/$(VERSION)/g' debian/dnsmasq-webui/usr/bin/dnsmasq-webui
+
+# Pas de démon dédié : l'app est servie par nginx + php-fpm.
+override_dh_installsystemd:
+	true

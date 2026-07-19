@@ -1,0 +1,12 @@
+# Artefacts de build Debian
+archive/
+*.deb
+*.buildinfo
+*.changes
+packaging/debian/dnsmasq-webui/
+packaging/debian/.debhelper/
+packaging/debian/debhelper-build-stamp
+packaging/debian/files
+packaging/debian/*.substvars
+packaging/debian/*.debhelper.log
+packaging/debian/changelog.dch

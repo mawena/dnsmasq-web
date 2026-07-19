@@ -1,0 +1,5 @@
+bin/dnsmasq-webui       usr/bin
+app/public              usr/share/dnsmasq-webui
+app/src                 usr/share/dnsmasq-webui
+app/views               usr/share/dnsmasq-webui
+app/bin                 usr/share/dnsmasq-webui

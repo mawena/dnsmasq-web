@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 /**
  * generator.php — Régénère les fichiers .conf de dnsmasq depuis MySQL,
- * puis appelle le wrapper root (sudo dnsweb-apply) qui valide et redémarre.
+ * puis appelle le wrapper root (sudo dnsmasq-webui-apply) qui valide et redémarre.
  *
  * MySQL est la SOURCE DE VÉRITÉ : on n'édite jamais les .conf à la main,
  * on les réécrit intégralement à chaque changement.
@@ -30,7 +30,7 @@ function generate_config(PDO $pdo, array $config): array
 {
     $dir = $config['webui_dir'];
     if (!is_dir($dir) || !is_writable($dir)) {
-        return [false, "Dossier non inscriptible : $dir (www-data est-il dans le groupe dnsweb ?)"];
+        return [false, "Dossier non inscriptible : $dir (www-data est-il dans le groupe webdev ?)"];
     }
 
     $files = [

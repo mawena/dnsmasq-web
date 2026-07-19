@@ -1,0 +1,11 @@
+dnsmasq-webui (1.0-1) unstable; urgency=medium
+
+  * Version initiale : interface web d'administration de dnsmasq.
+  * Installation et configuration automatiques via apt (dnsmasq, nginx, MySQL,
+    php-fpm tirés en dépendances).
+  * dnsmasq configuré comme résolveur du réseau local avec repli sur les DNS
+    publics ; libération du port 53 (systemd-resolved).
+  * Réutilisation du groupe partagé « webdev » ; exposition web via nginx, ou
+    via lnmp s'il est présent.
+
+ -- Charles Gamligo <gamligocharles@gmail.com>  Sat, 19 Jul 2026 12:00:00 +0000

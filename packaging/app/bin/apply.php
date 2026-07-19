@@ -12,7 +12,7 @@ if (PHP_SAPI !== 'cli') {
     exit("À exécuter en ligne de commande uniquement.\n");
 }
 
-$configFile = getenv('DNSMASQ_WEB_CONFIG') ?: '/etc/dnsmasq-web/config.php';
+$configFile = getenv('DNSMASQ_WEB_CONFIG') ?: '/etc/dnsmasq-webui/config.php';
 if (!is_file($configFile)) {
     fwrite(STDERR, "Config introuvable : $configFile\n");
     exit(1);
@@ -21,7 +21,7 @@ $config = require $configFile;
 $config += [
     'webui_dir'   => '/etc/dnsmasq.d/webui',
     'leases_file' => '/var/lib/misc/dnsmasq.leases',
-    'apply_cmd'   => 'sudo /usr/local/sbin/dnsweb-apply',
+    'apply_cmd'   => 'sudo /usr/sbin/dnsmasq-webui-apply',
 ];
 
 require dirname(__DIR__) . '/src/functions.php';

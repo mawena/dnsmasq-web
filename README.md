@@ -1,106 +1,98 @@
-# dnsmasq-web
+# dnsmasq-webui
 
-Interface web (PHP natif, zéro dépendance) pour administrer **dnsmasq** :
-DNS locaux, alias CNAME, réservations DHCP, baux actifs, filtrage DNS,
-paramètres généraux + service.
+Paquet Debian/Ubuntu qui transforme une machine en **serveur DNS/DHCP de réseau
+local** avec une **interface web d'administration**.
 
-**Architecture :** MySQL est la source de vérité. L'app fait le CRUD en base,
-régénère les fichiers `/etc/dnsmasq.d/webui/*.conf`, puis appelle un wrapper
-root ultra-ciblé (`sudo dnsweb-apply`) qui valide et redémarre dnsmasq.
+```bash
+sudo apt install dnsmasq-webui
+```
+
+`apt` installe et configure la pile complète : dnsmasq devient le résolveur du
+réseau (avec repli sur les DNS publics), le port 53 est libéré de
+systemd-resolved, et l'interface web est prête.
+
+## Fonctionnalités
+
+- Enregistrements **DNS locaux** (nom → IP) et **alias CNAME**
+- **Réservations DHCP** (IP fixe par MAC) + vue des **baux actifs**
+- **Filtrage DNS** (blocage de domaines, style Pi-hole)
+- **Paramètres** : DNS upstream, domaine local, cache, plage DHCP
+- Authentification, CSRF, validation stricte, journal d'audit
+
+## Architecture
+
+MySQL est la **source de vérité**. L'app fait le CRUD en base, régénère les
+fichiers `/etc/dnsmasq.d/webui/*.conf`, puis appelle un wrapper root
+ultra-ciblé (`sudo dnsmasq-webui-apply`) qui valide et redémarre dnsmasq.
 `www-data` n'a jamais les droits root.
 
-## Arborescence
+| Élément | Emplacement |
+|---------|-------------|
+| Code PHP | `/usr/share/dnsmasq-webui/` (docroot = `public/`) |
+| CLI | `/usr/bin/dnsmasq-webui` |
+| Config runtime | `/etc/dnsmasq-webui/config.php` |
+| `.conf` générés | `/etc/dnsmasq.d/webui/` |
+| Wrapper root | `/usr/sbin/dnsmasq-webui-apply` |
+
+## Structure du dépôt
 
 ```
-dwc                       → outil de gestion unique (install/uninstall/…)
-app/
-  public/                 → docroot nginx (index.php + assets)
-  src/                    → logique (bootstrap, générateur, validation, pages)
-  views/                  → gabarits HTML
-  bin/                    → outils CLI (create-admin, apply)
+build.sh              → génère le .deb (debuild) + scp vers le serveur
+update_repo.sh        → (sur le serveur) régénère + signe l'index apt
+packaging/
+├── bin/dnsmasq-webui → CLI (install hooks + administration)
+├── app/              → application PHP
+└── debian/           → control, rules, changelog, postinst/prerm/postrm…
+docs/                 → conception
 ```
 
-## L'outil `dwc`
+## Installation (utilisateur final)
 
-Toutes les opérations passent par un script unique, à lancer **en root depuis
-le dossier du dépôt** :
+Une fois le dépôt apt ajouté (voir `update_repo.sh`) :
+
+```bash
+sudo apt update
+sudo apt install dnsmasq-webui
+sudo dnsmasq-webui create-admin admin      # créer le compte admin
+```
+
+Interface : `http://dnsmasq.mawena.local/` (ou via lnmp s'il est présent).
+
+### Exposition web
+
+- Si **lnmp** est installé, le paquet **ne crée pas** de vhost — tu exposes
+  l'interface via lnmp (docroot `/usr/share/dnsmasq-webui/public`).
+- Sinon, le paquet configure nginx sur `dnsmasq.mawena.local`.
+
+## Commandes `dnsmasq-webui`
 
 | Commande | Rôle |
 |----------|------|
-| `sudo bash dwc install` | Met en place toute la plomberie système |
-| `sudo bash dwc uninstall` | Retire tout (`--purge` supprime aussi la base) |
-| `sudo bash dwc create-admin <user>` | Crée / met à jour un compte admin |
-| `sudo bash dwc apply` | Régénère les `.conf` depuis MySQL + recharge dnsmasq |
-| `sudo bash dwc status` | Diagnostic de santé complet |
-| `sudo bash dwc backup [dir]` | Archive base + `.conf` + config en `.tar.gz` |
-| `sudo bash dwc restore <file>` | Restaure une archive puis réapplique |
-| `sudo bash dwc help` | Aide |
+| `create-admin <user> [role]` | Crée / met à jour un compte |
+| `apply` | Régénère les `.conf` depuis MySQL + recharge |
+| `status` | Diagnostic de santé complet |
+| `backup [dir]` / `restore <f>` | Sauvegarde / restauration |
+| `reconfigure` | Rejoue la configuration système (idempotent) |
 
-## Déploiement
-
-### 1. Cloner le dépôt sur le serveur
+## Développement / publication
 
 ```bash
-sudo git clone <url-du-dépôt> /var/www/dnsmasq-web
-cd /var/www/dnsmasq-web
+./build.sh 1.0-1 "Version initiale"      # build + envoi sur mawena.cloud:2244
+# puis sur le serveur :
+sudo /var/www/dnsmasq-webui/repo/update_repo.sh
 ```
 
-### 2. Installer la plomberie système
+## Cycle de vie du paquet
 
-```bash
-sudo bash dwc install
-```
-
-Note le **mot de passe MySQL** affiché à la fin (aussi écrit dans
-`/etc/dnsmasq-web/config.php`).
-
-### 3. Créer le compte administrateur
-
-```bash
-sudo bash dwc create-admin admin
-```
-
-### 4. Configurer nginx (docroot)
-
-Le docroot est **`/var/www/dnsmasq-web/app/public`**. Exemple de vhost :
-
-```nginx
-server {
-    listen 80;
-    server_name _;
-    root /var/www/dnsmasq-web/app/public;
-    index index.php;
-    location / { try_files $uri $uri/ /index.php?$query_string; }
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;  # adapte la version
-    }
-    location ~ /\.(?!well-known) { deny all; }
-}
-```
-
-> ⚠️ Le docroot doit être `app/public`, **pas** la racine du clone — ainsi
-> `.git`, `dwc`, `src/`, `views/`, `bin/` ne sont jamais servis sur le web.
-
-### 5. Accéder à l'interface
-
-Ouvre l'URL de ton serveur et connecte-toi.
-
-## Vérifier / dépanner
-
-```bash
-sudo bash dwc status
-```
-
-- **« www-data dans dnsweb » ✗** : relance `sudo systemctl restart php*-fpm`.
-- **« Connexion base » ✗** : vérifie `/etc/dnsmasq-web/config.php`.
-- **« Dossier .conf inscriptible » ✗** : `www-data` pas encore dans le groupe
-  (reload php-fpm).
+- `apt install` → configure tout (groupe `webdev`, dnsmasq, port 53, DB, web).
+- `apt remove` → défait les changements système, **conserve** base + config.
+- `apt purge` → efface aussi la base MySQL et `/etc/dnsmasq-webui`.
+- Le groupe partagé `webdev` (venu de lnmp) n'est jamais supprimé.
 
 ## Sécurité
 
-- `www-data` écrit uniquement dans `/etc/dnsmasq.d/webui/` (groupe `dnsweb`).
-- Seule commande root autorisée : `/usr/local/sbin/dnsweb-apply` (sans
-  argument), via `sudoers.d/dnsweb`.
-- Entrées strictement validées avant écriture en conf (anti-injection).
-- CSRF sur toutes les actions, sessions durcies, mots de passe `password_hash`.
+- `www-data` écrit uniquement dans `/etc/dnsmasq.d/webui/` (groupe `webdev`).
+- Seule commande root autorisée : `/usr/sbin/dnsmasq-webui-apply` (sans
+  argument), via `sudoers.d/dnsmasq-webui`.
+- Dérogation systemd `ReadWritePaths` pour contourner `ProtectSystem=full`.
+- Entrées strictement validées (anti-injection), CSRF, `password_hash`.
