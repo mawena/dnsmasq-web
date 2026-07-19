@@ -370,8 +370,20 @@ cmd_status() {
         && ok "php-fpm en cours" || ko "php-fpm en cours"
     id -nG "$WEB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$DNSWEB_GROUP" \
         && ok "${WEB_USER} dans ${DNSWEB_GROUP}" || ko "${WEB_USER} dans ${DNSWEB_GROUP}"
-    { [ -d "$WEBUI_DIR" ] && [ -w "$WEBUI_DIR" ]; } \
-        && ok "Dossier .conf inscriptible" "$WEBUI_DIR" || ko "Dossier .conf inscriptible" "$WEBUI_DIR"
+    # Teste l'écriture DANS LE CONTEXTE de www-data (et non de root).
+    sudo -u "$WEB_USER" test -w "$WEBUI_DIR" 2>/dev/null \
+        && ok "Dossier .conf inscriptible (par ${WEB_USER})" "$WEBUI_DIR" \
+        || ko "Dossier .conf inscriptible (par ${WEB_USER})" "$WEBUI_DIR"
+    # open_basedir empêche PHP d'accéder à /etc/dnsmasq.d hors du webroot.
+    local ob
+    ob="$(grep -rhE '^[^;]*open_basedir[[:space:]]*=' /etc/php/*/fpm/ 2>/dev/null | head -1 || true)"
+    if [ -z "$ob" ]; then
+        ok "php-fpm open_basedir" "non défini (OK)"
+    elif printf '%s' "$ob" | grep -q "$DNSMASQ_CONFD"; then
+        ok "php-fpm open_basedir" "inclut ${DNSMASQ_CONFD}"
+    else
+        ko "php-fpm open_basedir" "défini SANS ${DNSMASQ_CONFD} → écriture bloquée"
+    fi
     [ -x "$APPLY_CMD" ]  && ok "Wrapper présent" "$APPLY_CMD"   || ko "Wrapper présent" "$APPLY_CMD"
     [ -f "$SUDOERS_FILE" ] && ok "Règle sudo présente"         || ko "Règle sudo présente"
     [ -f "$LOADER" ]     && ok "Loader dnsmasq présent"         || ko "Loader dnsmasq présent"
