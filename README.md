@@ -12,73 +12,95 @@ root ultra-ciblé (`sudo dnsweb-apply`) qui valide et redémarre dnsmasq.
 ## Arborescence
 
 ```
-installer.sh              → prépare le serveur (groupe, sudoers, DB, nginx…)
+dwc                       → outil de gestion unique (install/uninstall/…)
 app/
-  public/                 → racine servie par nginx (index.php + assets)
+  public/                 → docroot nginx (index.php + assets)
   src/                    → logique (bootstrap, générateur, validation, pages)
   views/                  → gabarits HTML
-  bin/create-admin.php    → crée le 1er compte admin (CLI)
+  bin/                    → outils CLI (create-admin, apply)
 ```
 
-## Déploiement sur le serveur
+## L'outil `dwc`
 
-### 1. Préparer le serveur
+Toutes les opérations passent par un script unique, à lancer **en root depuis
+le dossier du dépôt** :
+
+| Commande | Rôle |
+|----------|------|
+| `sudo bash dwc install` | Met en place toute la plomberie système |
+| `sudo bash dwc uninstall` | Retire tout (`--purge` supprime aussi la base) |
+| `sudo bash dwc create-admin <user>` | Crée / met à jour un compte admin |
+| `sudo bash dwc apply` | Régénère les `.conf` depuis MySQL + recharge dnsmasq |
+| `sudo bash dwc status` | Diagnostic de santé complet |
+| `sudo bash dwc backup [dir]` | Archive base + `.conf` + config en `.tar.gz` |
+| `sudo bash dwc restore <file>` | Restaure une archive puis réapplique |
+| `sudo bash dwc help` | Aide |
+
+## Déploiement
+
+### 1. Cloner le dépôt sur le serveur
 
 ```bash
-sudo bash installer.sh
+sudo git clone <url-du-dépôt> /var/www/dnsmasq-web
+cd /var/www/dnsmasq-web
 ```
 
-Note le **mot de passe MySQL** affiché à la fin (il est aussi écrit dans
+### 2. Installer la plomberie système
+
+```bash
+sudo bash dwc install
+```
+
+Note le **mot de passe MySQL** affiché à la fin (aussi écrit dans
 `/etc/dnsmasq-web/config.php`).
-
-### 2. Déployer le code
-
-Copie le contenu de `app/` vers la racine créée par l'installateur :
-
-```bash
-sudo rsync -a app/ /var/www/dnsmasq-web/
-sudo chown -R www-data:www-data /var/www/dnsmasq-web
-```
-
-Le vhost nginx pointe déjà vers `/var/www/dnsmasq-web/public`.
 
 ### 3. Créer le compte administrateur
 
 ```bash
-cd /var/www/dnsmasq-web
-sudo -u www-data php bin/create-admin.php admin
+sudo bash dwc create-admin admin
 ```
 
-### 4. Accéder à l'interface
+### 4. Configurer nginx (docroot)
 
-Ouvre `http://localhost/` et connecte-toi.
+Le docroot est **`/var/www/dnsmasq-web/app/public`**. Exemple de vhost :
+
+```nginx
+server {
+    listen 80;
+    server_name _;
+    root /var/www/dnsmasq-web/app/public;
+    index index.php;
+    location / { try_files $uri $uri/ /index.php?$query_string; }
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;  # adapte la version
+    }
+    location ~ /\.(?!well-known) { deny all; }
+}
+```
+
+> ⚠️ Le docroot doit être `app/public`, **pas** la racine du clone — ainsi
+> `.git`, `dwc`, `src/`, `views/`, `bin/` ne sont jamais servis sur le web.
+
+### 5. Accéder à l'interface
+
+Ouvre l'URL de ton serveur et connecte-toi.
+
+## Vérifier / dépanner
+
+```bash
+sudo bash dwc status
+```
+
+- **« www-data dans dnsweb » ✗** : relance `sudo systemctl restart php*-fpm`.
+- **« Connexion base » ✗** : vérifie `/etc/dnsmasq-web/config.php`.
+- **« Dossier .conf inscriptible » ✗** : `www-data` pas encore dans le groupe
+  (reload php-fpm).
 
 ## Sécurité
 
 - `www-data` écrit uniquement dans `/etc/dnsmasq.d/webui/` (groupe `dnsweb`).
-- La seule commande root autorisée est `/usr/local/sbin/dnsweb-apply`
-  (sans argument), via `sudoers.d/dnsweb`.
-- Toutes les entrées sont strictement validées avant d'être écrites en conf.
+- Seule commande root autorisée : `/usr/local/sbin/dnsweb-apply` (sans
+  argument), via `sudoers.d/dnsweb`.
+- Entrées strictement validées avant écriture en conf (anti-injection).
 - CSRF sur toutes les actions, sessions durcies, mots de passe `password_hash`.
-
-## Configuration
-
-`/etc/dnsmasq-web/config.php` (généré par l'installateur) :
-
-```php
-return [
-    'db'          => ['host' => '127.0.0.1', 'name' => 'dnsmasq_web', 'user' => 'dnsweb', 'pass' => '...'],
-    'webui_dir'   => '/etc/dnsmasq.d/webui',
-    'leases_file' => '/var/lib/misc/dnsmasq.leases',
-    'apply_cmd'   => 'sudo /usr/local/sbin/dnsweb-apply',
-];
-```
-
-## Dépannage
-
-- **« Dossier non inscriptible »** : `www-data` n'est pas encore dans le groupe
-  `dnsweb`. Relance `sudo systemctl restart php*-fpm`.
-- **« Échec de l'application »** : la sortie de `dnsmasq --test` s'affiche dans
-  le message d'erreur — corrige la donnée fautive.
-- **Baux vides** : vérifie que `/var/lib/misc/dnsmasq.leases` est lisible par le
-  groupe `dnsweb`.
