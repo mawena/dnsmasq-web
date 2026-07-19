@@ -10,3 +10,10 @@ packaging/debian/files
 packaging/debian/*.substvars
 packaging/debian/*.debhelper.log
 packaging/debian/changelog.dch
+
+# Dépôt apt : index signé + .deb, générés sur le VPS.
+# On garde l'arborescence (repo/ubuntu/.gitkeep) mais pas les artefacts.
+/repo/*
+!/repo/ubuntu/
+/repo/ubuntu/*
+!/repo/ubuntu/.gitkeep

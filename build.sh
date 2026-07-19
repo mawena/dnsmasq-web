@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # build.sh — Génère le paquet .deb dnsmasq-webui, l'archive localement et
-# l'envoie sur le serveur de dépôt (mawena.cloud).
+# l'envoie sur le serveur de dépôt (dépôt exposé sur dnsmasqwebui.mawena.cloud).
 #
 # Usage : ./build.sh <version> "<commentaire>"
 # Exemple : ./build.sh 1.0-1 "Version initiale"
@@ -60,7 +60,7 @@ if [ -f "$DEB_FILE" ]; then
     echo -e "\033[0;34m-> Transfert vers ${REMOTE_HOST}:${REMOTE_REPO} (port ${REMOTE_PORT})...\033[0m"
     scp -P "$REMOTE_PORT" "$DEB_FILE" "${REMOTE_HOST}:${REMOTE_REPO}/"
     echo -e "\033[0;32m=== Build v$VERSION envoyé ! ===\033[0m"
-    echo -e "Sur le serveur, lance : \033[0;33msudo /var/www/dnsmasq-webui/repo/update_repo.sh\033[0m"
+    echo -e "Sur le serveur, lance : \033[0;33msudo /var/www/dnsmasq-webui/update_repo.sh\033[0m"
 else
     echo -e "\033[0;31mFichier .deb introuvable : $DEB_FILE\033[0m"; exit 1
 fi

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsmasq-webui — installation</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2b3648;
+    --text: #e6edf3;
+    --muted: #9aa7b8;
+    --accent: #4c8dff;
+    --accent-soft: #1f3a63;
+    --code: #d6e2f5;
+    --ok: #3fb950;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f7fb; --panel: #ffffff; --panel-2: #f0f4fa;
+      --border: #d7dfea; --text: #10151d; --muted: #56637a;
+      --accent: #1f6feb; --accent-soft: #dbe8ff; --code: #1c2534;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 48px 20px 96px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  .logo {
+    width: 48px; height: 48px; flex: none; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), #7db0ff);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 22px;
+    box-shadow: 0 6px 20px -8px var(--accent);
+  }
+  h1 { font-size: 30px; margin: 0; letter-spacing: -0.02em; }
+  .tagline { color: var(--muted); margin: 4px 0 40px; font-size: 17px; }
+  h2 {
+    font-size: 20px; margin: 44px 0 14px; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .num {
+    width: 26px; height: 26px; flex: none; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+  }
+  p { color: var(--muted); }
+  code.inline {
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em; color: var(--code);
+  }
+  .cmd {
+    position: relative; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); margin: 14px 0; overflow: hidden;
+  }
+  .cmd pre {
+    margin: 0; padding: 18px 56px 18px 20px; overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.7; color: var(--code);
+  }
+  .cmd pre .p { color: var(--accent); user-select: none; }
+  .copy {
+    position: absolute; top: 10px; right: 10px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+    transition: all .15s ease; font-family: inherit;
+  }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+  .copy.done { color: var(--ok); border-color: var(--ok); }
+  .note {
+    border-left: 3px solid var(--accent); background: var(--panel);
+    padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; margin: 16px 0;
+    font-size: 14.5px;
+  }
+  .note strong { color: var(--text); }
+  details { margin: 12px 0; }
+  summary {
+    cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸ "; }
+  details[open] summary::before { content: "▾ "; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--code); }
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">D</div>
+    <div>
+      <h1>dnsmasq-webui</h1>
+    </div>
+  </header>
+  <p class="tagline">
+    Serveur DNS/DHCP de réseau local avec interface web d'administration.
+    Installation en <strong style="color:var(--text)">deux commandes</strong> sur Debian&nbsp;/&nbsp;Ubuntu.
+  </p>
+
+  <h2><span class="num">1</span> Ajouter le dépôt</h2>
+  <p>Une seule commande importe la clé de signature et enregistre la source&nbsp;apt&nbsp;:</p>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>curl -fsSL https://dnsmasqwebui.mawena.cloud/setup.sh | sudo bash</pre>
+  </div>
+
+  <details>
+    <summary>Méthode manuelle (sans script)</summary>
+    <p>Si tu préfères ne pas exécuter un script distant, fais-le à la main&nbsp;:</p>
+    <div class="cmd">
+      <button class="copy">Copier</button>
+      <pre><span class="p">$ </span>curl -fsSL https://dnsmasqwebui.mawena.cloud/repo/dnsmasq-webui.asc \
+    | sudo gpg --dearmor -o /usr/share/keyrings/dnsmasq-webui.gpg \
+  &amp;&amp; printf 'Types: deb\nURIs: https://dnsmasqwebui.mawena.cloud/repo/\nSuites: ./\nSigned-By: /usr/share/keyrings/dnsmasq-webui.gpg\n' \
+    | sudo tee /etc/apt/sources.list.d/dnsmasq-webui.sources</pre>
+    </div>
+  </details>
+
+  <h2><span class="num">2</span> Installer</h2>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>sudo apt update &amp;&amp; sudo apt install dnsmasq-webui</pre>
+  </div>
+  <p>
+    <code class="inline">apt</code> tire et configure toute la pile : dnsmasq devient le résolveur du
+    réseau (avec repli sur les DNS publics), le port&nbsp;53 est libéré de
+    <code class="inline">systemd-resolved</code>, et l'interface web est prête.
+  </p>
+
+  <h2>Créer le compte administrateur</h2>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>sudo dnsmasq-webui create-admin admin</pre>
+  </div>
+  <p>La commande demande un mot de passe puis crée le compte. Connecte-toi ensuite à l'interface web.</p>
+
+  <h2>Mettre à jour</h2>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>sudo apt update &amp;&amp; sudo apt install --only-upgrade dnsmasq-webui</pre>
+  </div>
+
+  <h2>Commandes utiles</h2>
+  <table>
+    <thead><tr><th>Commande</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>dnsmasq-webui create-admin &lt;user&gt;</code></td><td>Créer / mettre à jour un compte</td></tr>
+      <tr><td><code>dnsmasq-webui status</code></td><td>Diagnostic de santé complet</td></tr>
+      <tr><td><code>dnsmasq-webui apply</code></td><td>Régénérer les <code>.conf</code> depuis MySQL + recharger</td></tr>
+      <tr><td><code>dnsmasq-webui backup [dir]</code></td><td>Sauvegarde de la configuration</td></tr>
+      <tr><td><code>dnsmasq-webui restore &lt;f&gt;</code></td><td>Restauration</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Désinstaller</h2>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>sudo apt remove dnsmasq-webui     <span class="p"># garde la base + la config</span>
+<span class="p">$ </span>sudo apt purge dnsmasq-webui      <span class="p"># efface tout (base MySQL + /etc/dnsmasq-webui)</span></pre>
+  </div>
+
+  <div class="note">
+    <strong>Prérequis client :</strong> Debian/Ubuntu avec <code class="inline">curl</code> ou
+    <code class="inline">wget</code>. Le dépôt est signé GPG&nbsp;; aucune configuration
+    supplémentaire n'est nécessaire.
+  </div>
+
+  <footer>
+    Dépôt apt&nbsp;: <code class="inline">https://dnsmasqwebui.mawena.cloud/repo/</code> &nbsp;·&nbsp;
+    Paquet <code class="inline">dnsmasq-webui</code> pour Debian&nbsp;/&nbsp;Ubuntu.
+  </footer>
+
+</div>
+
+<script>
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.parentElement.querySelector('pre').cloneNode(true);
+      // Retire les invites "$ " et les commentaires visuels avant copie.
+      pre.querySelectorAll('.p').forEach(function (s) { s.remove(); });
+      var text = pre.textContent.replace(/\n+$/, '');
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = 'Copié !';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'Copier'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+</script>
+</body>
+</html>

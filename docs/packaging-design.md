@@ -41,9 +41,15 @@ réseau local avec administration web, prêt à l'emploi.
    chaque service php-fpm (contourne `ProtectSystem=full` qui met `/etc` en
    lecture seule pour php-fpm).
 
-9. **Dépôt apt** : mirror de l'infra lnmp. `build.sh` (debuild + scp -P 2244)
-   envoie le `.deb` dans `/var/www/dnsmasq-webui/repo/ubuntu` ; `update_repo.sh`
-   (sur le serveur) régénère et signe l'index (même clé GPG que lnmp).
+9. **Dépôt apt** : sous-domaine dédié `dnsmasqwebui.mawena.cloud` (webroot
+   `/var/www/dnsmasq-webui/`, servi par le nginx du VPS). `build.sh`
+   (debuild + scp -P 2244) envoie le `.deb` dans `/var/www/dnsmasq-webui/repo/ubuntu` ;
+   `update_repo.sh` (sur le serveur) scanne `ubuntu/`, écrit l'index
+   (`Packages`/`Release`/`InRelease`) à la racine `repo/` — les `Filename:`
+   pointent vers `ubuntu/…deb` — exporte la clé publique (`dnsmasq-webui.asc`)
+   et signe (même clé GPG que lnmp). Install client en 2 commandes : import de
+   la clé + source deb822 `URIs: https://dnsmasqwebui.mawena.cloud/repo/ Suites: ./`,
+   puis `apt install dnsmasq-webui`.
 
 ## Cycle de vie
 
