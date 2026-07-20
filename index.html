@@ -108,29 +108,27 @@
   </header>
   <p class="tagline">
     Serveur DNS/DHCP de réseau local avec interface web d'administration.
-    Installation en <strong style="color:var(--text)">deux commandes</strong> sur Debian&nbsp;/&nbsp;Ubuntu.
+    Installation en <strong style="color:var(--text)">trois étapes</strong> sur Debian&nbsp;/&nbsp;Ubuntu.
   </p>
 
-  <h2><span class="num">1</span> Ajouter le dépôt</h2>
-  <p>Une seule commande importe la clé de signature et enregistre la source&nbsp;apt&nbsp;:</p>
+  <h2><span class="num">1</span> Ajouter la clé GPG</h2>
+  <p>
+    Le dépôt <strong>mawena</strong> est partagé et signé : la clé publique authentifie
+    tous ses paquets (<code class="inline">lnmp</code>,
+    <code class="inline">dnsmasq-webui</code>, et d'autres à venir).
+  </p>
   <div class="cmd">
     <button class="copy">Copier</button>
-    <pre><span class="p">$ </span>curl -fsSL https://dnsmasqwebui.mawena.cloud/setup.sh | sudo bash</pre>
+    <pre><span class="p">$ </span>sudo curl -fsSL https://mawena.cloud/repo/public.key -o /etc/apt/keyrings/mawena-repository.asc</pre>
   </div>
 
-  <details>
-    <summary>Méthode manuelle (sans script)</summary>
-    <p>Si tu préfères ne pas exécuter un script distant, fais-le à la main&nbsp;:</p>
-    <div class="cmd">
-      <button class="copy">Copier</button>
-      <pre><span class="p">$ </span>curl -fsSL https://dnsmasqwebui.mawena.cloud/repo/dnsmasq-webui.asc \
-    | sudo gpg --dearmor -o /usr/share/keyrings/dnsmasq-webui.gpg \
-  &amp;&amp; printf 'Types: deb\nURIs: https://dnsmasqwebui.mawena.cloud/repo/\nSuites: ./\nSigned-By: /usr/share/keyrings/dnsmasq-webui.gpg\n' \
-    | sudo tee /etc/apt/sources.list.d/dnsmasq-webui.sources</pre>
-    </div>
-  </details>
+  <h2><span class="num">2</span> Ajouter le dépôt</h2>
+  <div class="cmd">
+    <button class="copy">Copier</button>
+    <pre><span class="p">$ </span>echo "deb [signed-by=/etc/apt/keyrings/mawena-repository.asc] https://mawena.cloud/repo stable main" | sudo tee /etc/apt/sources.list.d/mawena.list</pre>
+  </div>
 
-  <h2><span class="num">2</span> Installer</h2>
+  <h2><span class="num">3</span> Installer</h2>
   <div class="cmd">
     <button class="copy">Copier</button>
     <pre><span class="p">$ </span>sudo apt update &amp;&amp; sudo apt install dnsmasq-webui</pre>
@@ -174,13 +172,15 @@
   </div>
 
   <div class="note">
-    <strong>Prérequis client :</strong> Debian/Ubuntu avec <code class="inline">curl</code> ou
-    <code class="inline">wget</code>. Le dépôt est signé GPG&nbsp;; aucune configuration
-    supplémentaire n'est nécessaire.
+    <strong>Dépôt partagé :</strong> les étapes&nbsp;1 et&nbsp;2 (clé + source) ne se font
+    qu'une fois. Pour installer un autre paquet ensuite (p.&nbsp;ex.
+    <code class="inline">lnmp</code>), passe directement à l'étape&nbsp;3.
+    <br>Si <code class="inline">/etc/apt/keyrings</code> n'existe pas&nbsp;:
+    <code class="inline">sudo install -m 0755 -d /etc/apt/keyrings</code> avant l'étape&nbsp;1.
   </div>
 
   <footer>
-    Dépôt apt&nbsp;: <code class="inline">https://dnsmasqwebui.mawena.cloud/repo/</code> &nbsp;·&nbsp;
+    Dépôt apt&nbsp;: <code class="inline">https://mawena.cloud/repo/</code> &nbsp;·&nbsp;
     Paquet <code class="inline">dnsmasq-webui</code> pour Debian&nbsp;/&nbsp;Ubuntu.
   </footer>
 

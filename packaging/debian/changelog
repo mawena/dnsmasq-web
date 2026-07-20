@@ -1,3 +1,9 @@
+dnsmasq-webui (1.1-1) UNRELEASED; urgency=medium
+
+  * Correction du chemin d'exposition web
+
+ -- Charles Gamligo <gamligocharles@gmail.com>  Mon, 20 Jul 2026 09:13:54 +0000
+
 dnsmasq-webui (1.0-1) unstable; urgency=medium
 
   * Version initiale : interface web d'administration de dnsmasq.

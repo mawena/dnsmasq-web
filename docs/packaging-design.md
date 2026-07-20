@@ -34,22 +34,28 @@ réseau local avec administration web, prêt à l'emploi.
    domaine local. `no-resolv` est émis quand un upstream est défini (pas de
    boucle avec resolv.conf).
 
-7. **nginx conditionnel** : si `lnmp` est installé → aucun vhost (exposition via
-   lnmp). Sinon vhost sur `dnsmasq.mawena.local`.
+7. **nginx conditionnel + chemin d'exposition** : le paquet crée un symlink
+   `/var/www/dnsmasq-webui` → `/usr/share/dnsmasq-webui/public` (code en FHS,
+   exposition sous `/var/www`). Si `lnmp` est installé → aucun vhost (exposition
+   via lnmp, `root /var/www/dnsmasq-webui`). Sinon vhost sur
+   `dnsmasq.mawena.local` avec ce même `root`. Symlink retiré au `remove`.
 
 8. **Dérogation systemd** : drop-in `ReadWritePaths=/etc/dnsmasq.d/webui` pour
    chaque service php-fpm (contourne `ProtectSystem=full` qui met `/etc` en
    lecture seule pour php-fpm).
 
-9. **Dépôt apt** : sous-domaine dédié `dnsmasqwebui.mawena.cloud` (webroot
-   `/var/www/dnsmasq-webui/`, servi par le nginx du VPS). `build.sh`
-   (debuild + scp -P 2244) envoie le `.deb` dans `/var/www/dnsmasq-webui/repo/ubuntu` ;
-   `update_repo.sh` (sur le serveur) scanne `ubuntu/`, écrit l'index
-   (`Packages`/`Release`/`InRelease`) à la racine `repo/` — les `Filename:`
-   pointent vers `ubuntu/…deb` — exporte la clé publique (`dnsmasq-webui.asc`)
-   et signe (même clé GPG que lnmp). Install client en 2 commandes : import de
-   la clé + source deb822 `URIs: https://dnsmasqwebui.mawena.cloud/repo/ Suites: ./`,
-   puis `apt install dnsmasq-webui`.
+9. **Dépôt apt partagé signé** : dépôt multi-paquets commun à toute l'infra
+   mawena (`lnmp`, `dnsmasq-webui`, …), hébergé sur le VPS à
+   `/var/www/html/Mawena/mawena/repo/` et exposé sur `https://mawena.cloud/repo`
+   (suite `stable`, composant `main`), géré par **reprepro**. `build.sh` fait tout
+   sans connexion manuelle : debuild → `scp` du `.deb` dans `ubuntu/` → `ssh` qui
+   lance `update_repo.sh <deb>` (reprepro `includedeb stable`). Dépôt **signé GPG** :
+   clé publique à `https://mawena.cloud/repo/public.key`. Install client en 3
+   étapes : (1) `curl … public.key -o /etc/apt/keyrings/mawena-repository.asc`,
+   (2) `deb [signed-by=…/mawena-repository.asc] https://mawena.cloud/repo stable main`
+   dans `/etc/apt/sources.list.d/mawena.list`, (3) `apt install dnsmasq-webui`.
+   L'infra du dépôt (dossier, clé, vhost, `update_repo.sh`) est gérée une seule
+   fois, côté lnmp ; dnsmasq-webui n'y ajoute que son `.deb`.
 
 ## Cycle de vie
 

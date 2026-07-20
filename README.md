@@ -29,6 +29,7 @@ ultra-ciblé (`sudo dnsmasq-webui-apply`) qui valide et redémarre dnsmasq.
 | Élément | Emplacement |
 |---------|-------------|
 | Code PHP | `/usr/share/dnsmasq-webui/` (docroot = `public/`) |
+| Exposition web | `/var/www/dnsmasq-webui` → `…/public` (symlink) |
 | CLI | `/usr/bin/dnsmasq-webui` |
 | Config runtime | `/etc/dnsmasq-webui/config.php` |
 | `.conf` générés | `/etc/dnsmasq.d/webui/` |
@@ -37,8 +38,8 @@ ultra-ciblé (`sudo dnsmasq-webui-apply`) qui valide et redémarre dnsmasq.
 ## Structure du dépôt
 
 ```
-build.sh              → génère le .deb (debuild) + scp vers le serveur
-update_repo.sh        → (sur le serveur) régénère + signe l'index apt
+build.sh              → génère le .deb (debuild) + scp vers le dépôt partagé
+index.html            → page de documentation (install en 3 étapes)
 packaging/
 ├── bin/dnsmasq-webui → CLI (install hooks + administration)
 ├── app/              → application PHP
@@ -48,28 +49,25 @@ docs/                 → conception
 
 ## Installation (utilisateur final)
 
-Le paquet est publié sur le dépôt apt **`https://dnsmasqwebui.mawena.cloud/repo/`**.
-Deux commandes suffisent :
+Le paquet est publié sur le **dépôt apt partagé mawena**
+(`https://mawena.cloud/repo`, suite `stable`, composant `main`), signé GPG et
+commun à `lnmp`, `dnsmasq-webui` et aux futurs paquets. Trois étapes :
 
 ```bash
-# 1) Ajouter le dépôt (clé GPG + source deb822)
-curl -fsSL https://dnsmasqwebui.mawena.cloud/repo/dnsmasq-webui.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/dnsmasq-webui.gpg \
-  && printf 'Types: deb\nURIs: https://dnsmasqwebui.mawena.cloud/repo/\nSuites: ./\nSigned-By: /usr/share/keyrings/dnsmasq-webui.gpg\n' \
-  | sudo tee /etc/apt/sources.list.d/dnsmasq-webui.sources
+# 1) Ajouter la clé GPG du dépôt
+sudo curl -fsSL https://mawena.cloud/repo/public.key -o /etc/apt/keyrings/mawena-repository.asc
 
-# 2) Installer
+# 2) Ajouter le dépôt
+echo "deb [signed-by=/etc/apt/keyrings/mawena-repository.asc] https://mawena.cloud/repo stable main" | sudo tee /etc/apt/sources.list.d/mawena.list
+
+# 3) Installer
 sudo apt update && sudo apt install dnsmasq-webui
 ```
 
-Variante « une commande » via le script hébergé ([setup.sh](setup.sh)) :
-
-```bash
-# 1) Ajouter le dépôt
-curl -fsSL https://dnsmasqwebui.mawena.cloud/setup.sh | sudo bash
-# 2) Installer
-sudo apt install dnsmasq-webui
-```
+Les étapes 1 et 2 (clé + source) ne se font qu'une fois : ensuite
+`sudo apt install lnmp` (ou tout autre paquet mawena) suffit. Si
+`/etc/apt/keyrings` n'existe pas : `sudo install -m 0755 -d /etc/apt/keyrings`
+avant l'étape 1.
 
 Puis créer le compte admin :
 
@@ -81,9 +79,14 @@ Interface : `http://dnsmasq.mawena.local/` (ou via lnmp s'il est présent).
 
 ### Exposition web
 
+Le paquet crée un symlink **`/var/www/dnsmasq-webui`** → `/usr/share/dnsmasq-webui/public`
+(le code reste en FHS sous `/usr/share` ; `/var/www/dnsmasq-webui` est le chemin
+d'exposition à pointer par le vhost).
+
 - Si **lnmp** est installé, le paquet **ne crée pas** de vhost — tu exposes
-  l'interface via lnmp (docroot `/usr/share/dnsmasq-webui/public`).
-- Sinon, le paquet configure nginx sur `dnsmasq.mawena.local`.
+  l'interface via lnmp avec `root /var/www/dnsmasq-webui`.
+- Sinon, le paquet configure nginx sur `dnsmasq.mawena.local` (root =
+  `/var/www/dnsmasq-webui`).
 
 ## Commandes `dnsmasq-webui`
 
@@ -95,56 +98,36 @@ Interface : `http://dnsmasq.mawena.local/` (ou via lnmp s'il est présent).
 | `backup [dir]` / `restore <f>` | Sauvegarde / restauration |
 | `reconfigure` | Rejoue la configuration système (idempotent) |
 
-## Déploiement du serveur (git pull)
+## Dépôt apt partagé
 
-Le projet vit sur GitHub ; le VPS le récupère par `git pull`. Le dossier cloné
-**est** le webroot exposé sur `dnsmasqwebui.mawena.cloud`.
+Le paquet est distribué via le **dépôt partagé mawena** (signé, suite `stable`,
+composant `main`), hébergé sur le VPS à `/var/www/html/Mawena/mawena/repo/` et
+exposé sur `https://mawena.cloud/repo`. Le dossier `ubuntu/` contient TOUS les
+`.deb` (lnmp, dnsmasq-webui, …) : un seul dépôt sert donc `apt install lnmp`,
+`apt install dnsmasq-webui`, etc.
 
-### Mise en place (une fois)
-
-```bash
-# Sur le VPS
-sudo git clone <url-github> /var/www/dnsmasq-webui
-cd /var/www/dnsmasq-webui
-sudo cp deploy/nginx-dnsmasqwebui.conf /etc/nginx/sites-available/dnsmasqwebui.mawena.cloud
-sudo ln -s /etc/nginx/sites-available/dnsmasqwebui.mawena.cloud /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d dnsmasqwebui.mawena.cloud     # TLS
-```
-
-### Layout servi sur `dnsmasqwebui.mawena.cloud`
-
-```
-/var/www/dnsmasq-webui/          → dossier cloné = webroot
-├── index.html                   → https://dnsmasqwebui.mawena.cloud/         (doc + commandes)
-├── setup.sh                     → https://dnsmasqwebui.mawena.cloud/setup.sh (install 1 commande)
-├── favicon.svg
-├── update_repo.sh               → (non servi) régénère l'index du dépôt
-├── deploy/nginx-*.conf          → (non servi) vhost de référence
-├── packaging/, docs/, build.sh  → (non servis, masqués par le vhost)
-└── repo/                        → https://dnsmasqwebui.mawena.cloud/repo/     (base apt)
-    ├── ubuntu/                  → les .deb (Filename: ubuntu/…deb, gitignore)
-    ├── Packages, Packages.gz    → (générés, gitignore)
-    ├── Release, Release.gpg, InRelease
-    └── dnsmasq-webui.asc        → clé publique GPG (générée)
-```
-
-Seuls `index.html`, `setup.sh`, `favicon.svg` et `repo/` sont servis ; le reste
-(sources, `.git`, scripts) arrive par git mais reste masqué (voir le vhost).
+L'infrastructure du dépôt — indexation, **signature GPG**, publication de la clé
+(`public.key`), vhost nginx sur `mawena.cloud` — est **partagée et gérée
+directement sur le VPS** (côté lnmp). Ce projet n'en fait pas partie : il ne fait
+que produire son `.deb` et le déposer dans le pool commun.
 
 ### Publier une nouvelle version
 
-```bash
-# En local : bump changelog + build + envoi du .deb
-./build.sh 1.1-1 "Correctifs"            # scp du .deb -> VPS:/var/www/dnsmasq-webui/repo/ubuntu/
+Une seule commande en local : `build.sh` compile, archive, envoie le `.deb` sur
+le VPS **et** l'intègre au dépôt reprepro à distance (aucune connexion manuelle
+au serveur).
 
-# Sur le VPS : récupérer la doc/scripts à jour + régénérer l'index signé
-cd /var/www/dnsmasq-webui && sudo git pull
-sudo ./update_repo.sh                     # (re)génère Packages/Release/InRelease + clé
+```bash
+./build.sh 1.1-1 "Correctifs"
 ```
 
-> Les `.deb` et l'index apt sont des artefacts (gitignore) : le code et la doc
-> passent par git, le binaire par `scp` (ou un `debuild` directement sur le VPS).
+En coulisses : `debuild` → `scp` du `.deb` dans `…/mawena/repo/ubuntu/` → `ssh`
+qui lance `…/mawena/repo/update_repo.sh <deb>` (reprepro `includedeb stable`).
+Le paquet est alors dispo côté client via `apt update && apt install dnsmasq-webui`.
+
+> Seul `build.sh` est spécifique à dnsmasq-webui ; l'infra du dépôt (reprepro,
+> clé GPG, vhost) est gérée côté serveur. La doc d'installation (3 étapes) est
+> dans [index.html](index.html).
 
 ## Cycle de vie du paquet
 

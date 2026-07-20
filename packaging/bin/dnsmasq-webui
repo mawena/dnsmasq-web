@@ -27,7 +27,8 @@ VERSION="@VERSION@"
 # ─────────────────────────────────────────────────────────────────────────────
 WEB_USER="www-data"
 WEB_GROUP="webdev"                        # groupe partagé (réutilisé de lnmp)
-APP_DIR="/usr/share/dnsmasq-webui"        # code PHP (public/ = docroot)
+APP_DIR="/usr/share/dnsmasq-webui"        # code PHP (public/ = docroot réel)
+WEB_ROOT="/var/www/dnsmasq-webui"         # chemin d'exposition (symlink -> APP_DIR/public)
 WEBUI_DIR="/etc/dnsmasq.d/webui"          # .conf gérés par l'app
 DNSMASQ_CONFD="/etc/dnsmasq.d"
 LEASES_FILE="/var/lib/misc/dnsmasq.leases"
@@ -201,16 +202,20 @@ EOF
     # 9) Libérer le port 53 (systemd-resolved) pour que dnsmasq écoute dessus
     free_port_53
 
-    # 10) Vhost nginx : seulement si lnmp n'est pas là (sinon exposition via lnmp)
+    # 10) Chemin d'exposition web : /var/www/dnsmasq-webui -> code PHP (public/)
+    mkdir -p /var/www
+    ln -sfn "${APP_DIR}/public" "$WEB_ROOT"
+
+    # 11) Vhost nginx : seulement si lnmp n'est pas là (sinon exposition via lnmp)
     if lnmp_installed; then
-        c_info "lnmp détecté — pas de vhost (expose l'interface via lnmp)."
+        c_info "lnmp détecté — pas de vhost. Expose l'interface via lnmp (root = ${WEB_ROOT})."
     elif have nginx; then
         setup_nginx
     else
         c_warn "nginx absent — installe-le puis 'dnsmasq-webui reconfigure'."
     fi
 
-    # 11) Recharger php-fpm (groupe) puis générer les .conf + démarrer dnsmasq
+    # 12) Recharger php-fpm (groupe) puis générer les .conf + démarrer dnsmasq
     for fpm in $(systemctl list-units --type=service --no-legend 'php*-fpm.service' 2>/dev/null | awk '{print $1}'); do
         systemctl restart "$fpm" 2>/dev/null || true
     done
@@ -225,7 +230,7 @@ EOF
     echo
     c_ok "dnsmasq-webui installé."
     echo "  Prochaine étape : sudo dnsmasq-webui create-admin admin"
-    lnmp_installed && echo "  Exposition web  : via lnmp (root = ${APP_DIR}/public)" \
+    lnmp_installed && echo "  Exposition web  : via lnmp (root = ${WEB_ROOT})" \
                    || echo "  Interface web   : http://${NGINX_SERVER_NAME}/"
 }
 
@@ -265,7 +270,7 @@ setup_nginx() {
 server {
     listen 80;
     server_name ${NGINX_SERVER_NAME};
-    root ${APP_DIR}/public;
+    root ${WEB_ROOT};
     index index.php;
     location / { try_files \$uri \$uri/ /index.php?\$query_string; }
     location ~ \.php\$ { include snippets/fastcgi-php.conf; fastcgi_pass unix:${sock}; }
@@ -284,6 +289,7 @@ EOF
 cmd_remove() {
     restore_port_53
     rm -f "$SUDOERS_FILE" "$APPLY_CMD" "$LOADER"
+    rm -f "$WEB_ROOT"          # symlink d'exposition (le code reste sous /usr/share)
     rm -f /etc/nginx/sites-enabled/dnsmasq-webui "$NGINX_SITE"
     local fpm
     for fpm in $(systemctl list-unit-files 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}'); do
@@ -347,7 +353,9 @@ cmd_status() {
     else
         ko "Connexion base" "indisponible"
     fi
-    lnmp_installed && echo "  (lnmp présent : exposition web gérée par lnmp)"
+    [ -L "$WEB_ROOT" ] && ok "Exposition web" "$WEB_ROOT -> $(readlink "$WEB_ROOT")" \
+        || ko "Exposition web" "symlink $WEB_ROOT absent"
+    lnmp_installed && echo "  (lnmp présent : exposition web gérée par lnmp, root = ${WEB_ROOT})"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
